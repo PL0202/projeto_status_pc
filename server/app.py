@@ -1,0 +1,170 @@
+from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit, join_room
+from flask_sqlalchemy import SQLAlchemy
+import os, time, threading
+
+# ------------------------------
+# CONFIG
+# ------------------------------
+
+app = Flask(__name__)
+
+# ----------- POSTGRESQL -----------
+# Troque usuário e senha
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    'postgresql+psycopg2://postgres:0000@localhost:5432/projeto_status_pc'
+)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+
+# ------------------------------
+# MODELO DO BANCO
+# ------------------------------
+class Computador(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(50), unique=True, nullable=False)
+    ip = db.Column(db.String(50), nullable=False)
+    mac = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(30), default="Desconhecido")
+    ultimo_ping = db.Column(db.Float, default=0)
+
+    def to_dict(self):
+        return {
+            "ip": self.ip,
+            "mac": self.mac,
+            "status": self.status
+        }
+
+with app.app_context():
+    db.create_all()
+
+
+# ------------------------------
+# MONITORAMENTO AUTOMÁTICO (TIMEOUT)
+# ------------------------------
+
+TIMEOUT = 5  # segundos sem ping = desligado
+
+def monitorar_timeout():
+    while True:
+        with app.app_context():
+            pcs = Computador.query.all()
+            agora = time.time()
+
+            for pc in pcs:
+                if pc.ultimo_ping > 0 and agora - pc.ultimo_ping > TIMEOUT:
+                    if pc.status != "desligado":
+                        pc.status = "desligado"
+                        db.session.commit()
+                        socketio.emit("status_atualizado", {pc.nome: pc.to_dict()})
+                        print(f"[TIMEOUT] {pc.nome} marcado como DESLIGADO")
+
+        time.sleep(1)
+
+threading.Thread(target=monitorar_timeout, daemon=True).start()
+
+
+# ------------------------------
+# ROTAS HTTP
+# ------------------------------
+
+@app.route("/")
+def index():
+    computadores = {pc.nome: pc.to_dict() for pc in Computador.query.all()}
+    return render_template("index.html", computadores=computadores)
+
+
+@app.route("/comando/ligar/<nome>")
+def comando_ligar(nome):
+    socketio.emit("ligar_pc", room=nome)
+    return jsonify({"message": f"Comando enviado para ligar {nome}."})
+
+
+@app.route("/comando/desligar/<nome>")
+def comando_desligar(nome):
+    socketio.emit("desligar_pc", room=nome)
+    return jsonify({"message": f"Comando enviado para desligar {nome}."})
+
+
+# ------------------------------
+# EVENTOS WEBSOCKET
+# ------------------------------
+
+@app.route("/adicionar_pc", methods=["POST"])
+def adicionar_pc():
+    dados = request.json
+    nome = dados.get("nome")
+    ip = dados.get("ip")
+    mac = dados.get("mac")
+
+    pc = Computador.query.filter_by(nome=nome).first()
+
+    if pc:
+        return jsonify({"message": "PC já existe."}), 200
+
+    novo_pc = Computador(
+        nome=nome,
+        ip=ip,
+        mac=mac,
+        status="desligado",
+        ultimo_ping=0
+    )
+    db.session.add(novo_pc)
+    db.session.commit()
+
+    print(f"[HTTP] Novo PC adicionado: {nome}")
+    return jsonify({"message": "PC adicionado com sucesso."}), 201
+
+
+@app.route("/apagar_pc/<nome>", methods=["DELETE"])
+def apagar_pc(nome):
+    pc = Computador.query.filter_by(nome=nome).first()
+
+    if not pc:
+        return jsonify({"error": "PC não encontrado"}), 404
+
+    db.session.delete(pc)
+    db.session.commit()
+
+    print(f"[DELETE] PC removido: {nome}")
+    return jsonify({"message": "PC apagado com sucesso"}), 200
+
+
+@socketio.on("register")
+def registrar_cliente(data):
+    """ Cliente envia: {"nome": "PC1"} ao conectar """
+    nome = data.get("nome")
+
+    join_room(nome)
+    print(f"[WS] Cliente conectado: {nome}")
+
+    pc = Computador.query.filter_by(nome=nome).first()
+    if pc:
+        pc.status = "ligado"
+        pc.ultimo_ping = time.time()
+        db.session.commit()
+
+        socketio.emit("status_atualizado", {pc.nome: pc.to_dict()})
+
+
+@socketio.on("heartbeat")
+def heartbeat(data):
+    nome = data.get("nome")
+
+    pc = Computador.query.filter_by(nome=nome).first()
+    if not pc:
+        return
+
+    pc.status = "ligado"
+    pc.ultimo_ping = time.time()
+    db.session.commit()
+
+    print(f"[HEARTBEAT] {nome} OK")
+
+
+# ------------------------------
+if __name__ == "__main__":
+    socketio.run(app, host="10.27.93.103", port=5000, debug=True)

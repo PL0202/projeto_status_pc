@@ -1,0 +1,133 @@
+import socket
+import requests
+import time
+import platform
+import uuid
+import subprocess
+import socketio
+import threading
+
+# ===== CONFIGURAÇÕES DO CLIENTE =====
+SERVIDOR = "http://10.27.93.103:5000"
+NOME_PC = socket.gethostname()
+
+# Pegar IP seguro (mesmo em redes estranhas)
+try:
+    IP_LOCAL = socket.gethostbyname_ex(socket.gethostname())[2][0]
+except:
+    IP_LOCAL = "0.0.0.0"
+
+INTERVALO = 10  # segundos entre atualizações
+# ====================================
+
+
+# ----- FUNÇÃO PARA PEGAR MAC -----
+def get_mac():
+    mac = uuid.getnode()
+    return ":".join(f"{(mac >> shift) & 0xff:02x}" for shift in range(40, -8, -8))
+
+MAC_ADDRESS = get_mac()
+
+
+# ----- HTTP: Registrar PC -----
+def registrar_pc():
+    try:
+        r = requests.post(
+            f"{SERVIDOR}/adicionar_pc",
+            json={"nome": NOME_PC, "ip": IP_LOCAL, "mac": MAC_ADDRESS},
+            timeout=5
+        )
+        if r.ok:
+            print(f"[OK] {NOME_PC} registrado no servidor.")
+        else:
+            print(f"[INFO] {NOME_PC} já está cadastrado no servidor.")
+    except Exception as e:
+        print(f"[ERRO] Falha ao registrar: {e}")
+
+
+# ----- HTTP: Enviar status -----
+def enviar_status(status):
+    try:
+        requests.post(
+            f"{SERVIDOR}/atualizar_status",
+            json={"nome": NOME_PC, "status": status},
+            timeout=5
+        )
+    except Exception as e:
+        print(f"[ERRO] Falha ao enviar status: {e}")
+
+
+# ----- STATUS FIXO -----
+def obter_status_atual():
+    return "Ligado"
+
+
+# ----- WEBSOCKET CLIENT -----
+sio = socketio.Client(reconnection=True, reconnection_attempts=99999, reconnection_delay=1)
+
+
+@sio.event
+def connect():
+    print("[WS] Conectado ao servidor Socket.IO!")
+
+
+@sio.event
+def disconnect():
+    print("[WS] Desconectado! Tentando reconectar...")
+
+
+# ======= EVENTO: ligar PC =======
+@sio.on("ligar_pc")
+def evento_ligar_pc(data):
+    if data.get("nome") != NOME_PC:
+        return
+    print("[WS] Comando recebido: LIGAR")
+    print("Simulando operação de ligar...")
+
+
+# ======= EVENTO: desligar PC =======
+@sio.on("desligar_pc")
+def evento_desligar_pc(data):
+    if data.get("nome") != NOME_PC:
+        return
+    print("[WS] Comando recebido: DESLIGAR")
+
+    print("Desligando máquina...")
+    if platform.system() == "Windows":
+        subprocess.run("shutdown /s /t 0")
+    else:
+        subprocess.run(["shutdown", "now"])
+
+
+# ================================================
+# HEARTBEAT (para servidor marcar OFFLINE depois de X segundos)
+# ================================================
+def heartbeat_loop():
+    while True:
+        try:
+            sio.emit("heartbeat", {"nome": NOME_PC})
+        except:
+            pass
+        time.sleep(5)  # intervalo do heartbeat
+
+
+# ================================================
+def main():
+    print(f"Cliente iniciado em {NOME_PC} ({IP_LOCAL})")
+
+    registrar_pc()
+
+    print("[WS] Conectando ao servidor WebSocket...")
+    sio.connect(SERVIDOR)
+
+    # iniciar heartbeat em thread separada
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
+
+    # Loop principal mantendo o status atualizado
+    while True:
+        enviar_status(obter_status_atual())
+        time.sleep(INTERVALO)
+
+
+if __name__ == "__main__":
+    main()

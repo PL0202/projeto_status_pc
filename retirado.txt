@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Painel de Controle</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+
+<h1>Painel de Controle de Computadores</h1>
+<button id="btnAdicionar">➕ Adicionar Computador</button>
+
+<table id="tabela">
+    <tr><th>Computador</th><th>IP</th><th>MAC</th><th>Status</th><th>Ações</th></tr>
+
+    {% for nome, pc in computadores.items() %}
+    <tr id="{{ nome }}">
+        <td>{{ nome }}</td>
+        <td>{{ pc.ip }}</td>
+        <td>{{ pc.mac }}</td>
+        <td class="status">{{ pc.status }}</td>
+        <td>
+            <button onclick="ligar('{{ nome }}')">Ligar</button>
+            <button onclick="desligar('{{ nome }}')">Desligar</button>
+            <button class="apagar" onclick="apagar('{{ nome }}')">🗑️ Apagar</button>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+
+<!-- Modal para adicionar PC -->
+<div id="modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
+    <div style="background:white; padding:20px; border-radius:8px; text-align:center;">
+        <h2>Adicionar Computador</h2>
+        <input type="text" id="novoNome" placeholder="Nome do PC"><br><br>
+        <input type="text" id="novoIP" placeholder="Endereço IP"><br><br>
+        <input type="text" id="novoMAC" placeholder="Endereço MAC"><br><br>
+        <button onclick="enviarNovoPC()">Adicionar</button>
+        <button onclick="fecharModal()">Cancelar</button>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+
+    async function ligar(nome) {
+        const r = await fetch(`/ligar/${nome}`);
+        const data = await r.json();
+        alert(data.message);
+    }
+
+    async function desligar(nome) {
+        const r = await fetch(`/desligar/${nome}`);
+        const data = await r.json();
+        alert(data.message);
+    }
+
+    // 🗑️ Função para apagar PC
+    async function apagar(nome) {
+        if (!confirm(`Tem certeza que deseja remover o computador "${nome}"?`)) return;
+
+        const r = await fetch(`/apagar_pc/${nome}`, { method: "DELETE" });
+        const data = await r.json();
+
+        if (r.ok) {
+            alert(data.message);
+            // Remove a linha da tabela localmente
+            document.getElementById(nome)?.remove();
+        } else {
+            alert(data.error);
+        }
+    }
+
+    // Abre e fecha o modal
+    const modal = document.getElementById("modal");
+    document.getElementById("btnAdicionar").onclick = () => modal.style.display = "flex";
+    function fecharModal() { modal.style.display = "none"; }
+
+    // Envia novo computador para o servidor
+    async function enviarNovoPC() {
+        const nome = document.getElementById("novoNome").value.trim();
+        const ip = document.getElementById("novoIP").value.trim();
+        const mac = document.getElementById("novoMAC").value.trim();
+
+        if (!nome || !ip || !mac) {
+            alert("Preencha todos os campos!");
+            return;
+        }
+
+        const r = await fetch("/adicionar_pc", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ nome, ip, mac })
+        });
+
+        const data = await r.json();
+        if (r.ok) {
+            fecharModal();
+            alert(data.message);
+        } else {
+            alert(data.error);
+        }
+    }
+
+    // Atualiza status em tempo real
+    socket.on("status_atualizado", data => {
+        for (const [nome, info] of Object.entries(data)) {
+            let linha = document.getElementById(nome);
+            if (!linha) continue;
+            linha.querySelector(".status").textContent = info.status;
+        }
+    });
+
+    // Recebe novo PC em tempo real
+    socket.on("novo_pc", data => {
+        for (const [nome, info] of Object.entries(data)) {
+            if (document.getElementById(nome)) return;
+
+            const tabela = document.getElementById("tabela");
+            const linha = document.createElement("tr");
+            linha.id = nome;
+            linha.innerHTML = `
+                <td>${nome}</td>
+                <td>${info.ip}</td>
+                <td>${info.mac}</td>
+                <td class="status">${info.status}</td>
+                <td>
+                    <button onclick="ligar('${nome}')">Ligar</button>
+                    <button onclick="desligar('${nome}')">Desligar</button>
+                    <button class="apagar" onclick="apagar('${nome}')">🗑️ Apagar</button>
+                </td>`;
+            tabela.appendChild(linha);
+        }
+    });
+
+    // Remove PCs em tempo real se outro cliente apagar
+    socket.on("pc_removido", data => {
+        const nome = data.nome;
+        document.getElementById(nome)?.remove();
+    });
+</script>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f9;
+    color: #333;
+    margin: 0;
+    padding: 20px;
+    text-align: center;
+}
+
+table {
+    margin: 20px auto;
+    border-collapse: collapse;
+    width: 80%;
+    background: #fff;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+th, td {
+    padding: 12px;
+    border-bottom: 1px solid #ddd;
+}
+
+th {
+    background: #0000ff;
+    color: white;
+}
+
+button {
+    background: #0000ff;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+button:hover { background: #0066ff; }
+
+button.apagar {
+    background: #ff0000;
+}
+
+button.apagar:hover {
+    background: #cc0000;
+}
+
+#btnAdicionar { margin-bottom: 10px; }
+</style>
+
+</body>
+</html>
