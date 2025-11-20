@@ -11,10 +11,10 @@ app = Flask(__name__)
 
 # ----------- POSTGRESQL -----------
 # Troque usuário e senha
-app.config['SQLALCHEMY_DATABASE_URI'] = (
-    'postgresql+psycopg2://postgres:0000@localhost:5432/projeto_status_pc'
-)
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+DATABASE_URL=postgresql://postgres:0000@db.xakwcafzbyfklvfinhyl.supabase.co:5432/postgres
+
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
+
 
 db = SQLAlchemy(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
