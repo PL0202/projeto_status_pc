@@ -1,0 +1,6 @@
+Flask
+Flask-SocketIO
+Flask-SQLAlchemy
+psycopg2-binary
+python-socketio
+python-engineio
