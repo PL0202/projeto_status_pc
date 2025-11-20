@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 # ----------- POSTGRESQL -----------
 # Troque usuário e senha
-DATABASE_URL=postgresql://postgres:0000@db.xakwcafzbyfklvfinhyl.supabase.co:5432/postgres
+DATABASE_URL = "postgresql+psycopg2://postgres:0000@db.xakwcafzbyfklvfinhyl.supabase.co:5432/postgres"
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
 
